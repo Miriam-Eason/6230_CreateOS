@@ -31,8 +31,14 @@ kernel_start:
     ; 清空命令历史记录
     call init_history
     
-    ; 命令行循环
+    ; 修复命令循环函数，确保正确清空命令缓冲区
 command_loop:
+    ; 清除内容区域
+    call clear_content_area
+    
+    ; 更新状态栏，确保它总是正确显示
+    call update_status
+    
     ; 将光标定位到命令输入区
     mov ah, 02h         ; 设置光标位置
     mov bh, 0           ; 页面号
@@ -57,9 +63,6 @@ command_loop:
     
     ; 解析命令
     call parse_command
-    
-    ; 更新状态栏
-    call update_status
     
     ; 继续循环
     jmp command_loop
@@ -126,8 +129,17 @@ draw_gui:
     
     ret
 
-; 更新状态栏信息
+; 修改状态栏更新函数，确保它完全重绘状态栏
 update_status:
+    pusha           ; 保存所有寄存器
+
+        ; 重绘状态栏背景
+    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
+    mov bh, COLOR_STATUS
+    mov cx, 0x1700      ; 左上角: 行=23, 列=0
+    mov dx, 0x174F      ; 右下角: 行=23, 列=79
+    int 0x10
+
     ; 定位到状态栏
     mov ah, 02h         ; 设置光标位置
     mov bh, 0           ; 页面号
@@ -140,6 +152,7 @@ update_status:
     mov bl, COLOR_STATUS
     call print_string_attr
     
+    popa            ; 恢复所有寄存器
     ret
 
 ; 打印带颜色的字符串，使用指定属性
@@ -235,7 +248,7 @@ add_to_history:
     mov word [history_index], 0  ; 重置历史索引
     ret
 
-; 增强的读取字符串函数，支持命令历史记录
+; 增强的读取字符串函数，支持命令历史记录 修复后的read_string函数，添加Mac删除键支持
 read_string:
     xor cx, cx          ; 清零计数器
 .read_char:
@@ -248,6 +261,10 @@ read_string:
     
     ; 退格键 - 删除字符
     cmp al, 8
+    je .backspace
+    
+    ; Mac删除键 - 通常是127
+    cmp al, 127
     je .backspace
     
     ; 检查上下箭头键 (特殊键)
@@ -263,7 +280,7 @@ read_string:
     ; 常规字符
     cmp al, ' '         ; 小于空格的控制字符
     jl .read_char
-    cmp al, 127         ; 大于DEL的扩展ASCII
+    cmp al, 126         ; 大于DEL的扩展ASCII(排除127)
     ja .read_char
     
     ; 检查缓冲区上限
@@ -284,6 +301,7 @@ read_string:
     
     ; 显示退格
     mov ah, 0x0E
+    mov al, 8
     int 0x10
     
     ; 显示空格覆盖字符
@@ -541,7 +559,11 @@ init_fs:
     ret
 
 ; 解析命令
+; 修复解析命令函数，确保所有命令都能正确执行
 parse_command:
+    ; 首先清除内容区域，为新命令输出做准备
+    call clear_content_area
+
     ; 跳过命令前的空格
     mov si, cmd_buffer
     call skip_spaces
@@ -550,34 +572,50 @@ parse_command:
     cmp byte [si], 0
     je .done
     
+    ; 保存命令开始位置
+    push si
+    
     ; 比较命令
     mov di, cmd_help
     call compare_strings
-    je .cmd_help
+    pop si          ; 恢复命令位置
+    jc .cmd_help    ; 注意：这里使用jc而不是je，因为compare_strings返回的是进位标志
     
+    push si
     mov di, cmd_create
     call compare_strings
-    je .cmd_create
+    pop si
+    jc .cmd_create
     
+    push si
     mov di, cmd_delete
     call compare_strings
-    je .cmd_delete
+    pop si
+    jc .cmd_delete
     
+    push si
     mov di, cmd_rename
     call compare_strings
-    je .cmd_rename
+    pop si
+    jc .cmd_rename
     
+    push si
     mov di, cmd_list
     call compare_strings
-    je .cmd_list
+    pop si
+    jc .cmd_list
     
+    push si
     mov di, cmd_move
     call compare_strings
-    je .cmd_move
+    pop si
+    jc .cmd_move
     
+    push si
     mov di, cmd_echo
     call compare_strings
-    je .cmd_echo
+    pop si
+    jc .cmd_echo
     
     ; 未知命令
     mov si, msg_unknown
@@ -705,6 +743,29 @@ parse_command:
     jmp .done
     
 .done:
+    ; 更新状态栏，确保它不被命令输出覆盖
+    call update_status
+    ret
+
+; 新增：清除内容区域函数
+clear_content_area:
+    pusha           ; 保存所有寄存器
+    
+    ; 清除内容区域 (行1-21)
+    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
+    mov bh, COLOR_CONTENT
+    mov cx, 0x0100      ; 左上角: 行=1, 列=0
+    mov dx, 0x164F      ; 右下角: 行=22, 列=79
+    int 0x10
+    
+    ; 重置光标到内容区域的开始位置
+    mov ah, 02h         ; 设置光标位置
+    mov bh, 0           ; 页面号
+    mov dh, 2           ; 行 (从0开始)
+    mov dl, 2           ; 列 (从0开始)
+    int 10h
+    
+    popa            ; 恢复所有寄存器
     ret
 
 ; 跳过命令部分
@@ -784,16 +845,51 @@ compare_strings:
     stc                 ; 设置进位标志表示相等
     ret
 
-; 打印字符串
+; 打印字符串,使其更可靠地处理换行和光标位置
 print_string:
+    pusha           ; 保存所有寄存器
     mov ah, 0x0E
 .loop:
     lodsb
     test al, al
     jz .done
+    
+    ; 检查是否为回车或换行
+    cmp al, 13      ; 回车 (CR)
+    je .print_cr
+    cmp al, 10      ; 换行 (LF)
+    je .print_lf
+    
+    ; 普通字符
     int 0x10
     jmp .loop
+    
+.print_cr:
+    int 0x10        ; 输出回车
+    jmp .loop
+    
+.print_lf:
+    int 0x10        ; 输出换行
+    
+    ; 检查这里是否需要跟一个回车
+    cmp byte [si], 13
+    je .loop        ; 如果下一个字符是CR，正常继续
+    
+    ; 否则我们需要手动定位光标到行首
+    pusha
+    mov ah, 03h     ; 获取当前光标位置
+    mov bh, 0
+    int 10h
+    
+    mov ah, 02h     ; 设置光标位置
+    mov dl, 0       ; 列 = 0 (行首)
+    int 10h
+    popa
+    
+    jmp .loop
+    
 .done:
+    popa            ; 恢复所有寄存器
     ret
 
 ; 文件系统操作
