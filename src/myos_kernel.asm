@@ -1,14 +1,6 @@
 [BITS 16]
 [ORG 0x1000]
 
-; GUI常量定义
-COLOR_HEADER      equ 0x1F    ; 蓝底白字
-COLOR_BORDER      equ 0x1F    ; 蓝底白字
-COLOR_CONTENT     equ 0x07    ; 黑底白字
-COLOR_HIGHLIGHT   equ 0x0F    ; 黑底亮白字
-COLOR_STATUS      equ 0x70    ; 白底黑字
-COLOR_ERROR       equ 0x0C    ; 黑底红字
-
 ; 命令历史记录缓冲区
 MAX_HISTORY       equ 5       ; 最多存储5条命令
 HISTORY_SIZE      equ 256     ; 每条命令最多256字节
@@ -22,8 +14,16 @@ kernel_start:
     mov ax, 0x0003      ; 80x25 文本模式
     int 0x10
     
-    ; 绘制GUI界面
-    call draw_gui
+    ; 清屏
+    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
+    mov bh, 0x07        ; 黑底白字
+    mov cx, 0x0000      ; 左上角: 行=0, 列=0
+    mov dx, 0x184F      ; 右下角: 行=24, 列=79
+    int 0x10
+    
+    ; 显示欢迎消息
+    mov si, msg_welcome
+    call print_string
     
     ; 初始化文件系统
     call init_fs
@@ -31,19 +31,12 @@ kernel_start:
     ; 清空命令历史记录
     call init_history
     
-    ; 修复命令循环函数，确保正确清空命令缓冲区
 command_loop:
-    ; 清除内容区域
-    call clear_content_area
-    
-    ; 更新状态栏，确保它总是正确显示
-    call update_status
-    
-    ; 将光标定位到命令输入区
+    ; 将光标定位到新行
     mov ah, 02h         ; 设置光标位置
     mov bh, 0           ; 页面号
-    mov dh, 22          ; 行 (从0开始)
-    mov dl, 9           ; 列 (从0开始)
+    mov dh, 24          ; 行 (从0开始，这里设置为最后一行，会自动滚动)
+    mov dl, 0           ; 列 (从0开始)
     int 10h
     
     ; 显示提示符
@@ -66,123 +59,6 @@ command_loop:
     
     ; 继续循环
     jmp command_loop
-
-; 绘制GUI界面
-draw_gui:
-    ; 清屏
-    mov ax, 0x0003      ; 80x25 文本模式
-    int 0x10
-    
-    ; 绘制标题栏
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_HEADER
-    mov cx, 0x0000      ; 左上角: 行=0, 列=0
-    mov dx, 0x004F      ; 右下角: 行=0, 列=79
-    int 0x10
-    
-    ; 显示标题
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 0           ; 行 (从0开始)
-    mov dl, 30          ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_title
-    call print_string_color
-    
-    ; 绘制内容区域
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_CONTENT
-    mov cx, 0x0100      ; 左上角: 行=1, 列=0
-    mov dx, 0x164F      ; 右下角: 行=22, 列=79
-    int 0x10
-    
-    ; 绘制状态栏
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_STATUS
-    mov cx, 0x1700      ; 左上角: 行=23, 列=0
-    mov dx, 0x174F      ; 右下角: 行=23, 列=79
-    int 0x10
-    
-    ; 显示内核消息
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 2           ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_kernel
-    call print_string
-    
-    ; 显示欢迎消息
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 4           ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_welcome
-    call print_string
-    
-    ; 显示状态栏信息
-    call update_status
-    
-    ret
-
-; 修改状态栏更新函数，确保它完全重绘状态栏
-update_status:
-    pusha           ; 保存所有寄存器
-
-        ; 重绘状态栏背景
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_STATUS
-    mov cx, 0x1700      ; 左上角: 行=23, 列=0
-    mov dx, 0x174F      ; 右下角: 行=23, 列=79
-    int 0x10
-
-    ; 定位到状态栏
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 23          ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    ; 显示状态信息
-    mov si, msg_status
-    mov bl, COLOR_STATUS
-    call print_string_attr
-    
-    popa            ; 恢复所有寄存器
-    ret
-
-; 打印带颜色的字符串，使用指定属性
-print_string_attr:
-    mov ah, 0x09        ; BIOS写字符及属性
-.loop:
-    lodsb
-    test al, al
-    jz .done
-    
-    mov cx, 1           ; 重复次数
-    int 0x10
-    
-    ; 移动光标
-    mov ah, 0x03        ; 获取光标位置
-    int 0x10
-    inc dl              ; 增加列
-    mov ah, 0x02        ; 设置光标位置
-    int 0x10
-    
-    mov ah, 0x09        ; 恢复AH
-    jmp .loop
-.done:
-    ret
-
-; 打印带颜色的字符串，使用默认前景/背景色
-print_string_color:
-    mov bl, COLOR_HEADER
-    call print_string_attr
-    ret
 
 ; 初始化命令历史记录
 init_history:
@@ -248,7 +124,7 @@ add_to_history:
     mov word [history_index], 0  ; 重置历史索引
     ret
 
-; 增强的读取字符串函数，支持命令历史记录 修复后的read_string函数，添加Mac删除键支持
+; 增强的读取字符串函数，支持命令历史记录，添加Mac删除键支持
 read_string:
     xor cx, cx          ; 清零计数器
 .read_char:
@@ -559,11 +435,7 @@ init_fs:
     ret
 
 ; 解析命令
-; 修复解析命令函数，确保所有命令都能正确执行
 parse_command:
-    ; 首先清除内容区域，为新命令输出做准备
-    call clear_content_area
-
     ; 跳过命令前的空格
     mov si, cmd_buffer
     call skip_spaces
@@ -616,6 +488,12 @@ parse_command:
     call compare_strings
     pop si
     jc .cmd_echo
+    
+    push si
+    mov di, cmd_exit    ; 新增exit命令检查
+    call compare_strings
+    pop si
+    jc .cmd_exit        ; 如果是exit命令，跳转到处理代码
     
     ; 未知命令
     mov si, msg_unknown
@@ -742,30 +620,24 @@ parse_command:
     call print_string
     jmp .done
     
+.cmd_exit:
+    ; Display exit message
+    mov si, msg_exit
+    call print_string
+    
+    ; Exit system using BIOS services
+    ; First try INT 20h (simple program termination)
+    int 0x20
+    
+    ; If that doesn't work, try the classic DOS exit
+    mov ax, 0x4C00      ; AH=4Ch (exit), AL=00 (return code)
+    int 0x21
+    
+    ; If all else fails, use a far jump to reboot
+    ; (This is a last resort that should work on any system)
+    jmp 0xFFFF:0x0000
+    
 .done:
-    ; 更新状态栏，确保它不被命令输出覆盖
-    call update_status
-    ret
-
-; 新增：清除内容区域函数
-clear_content_area:
-    pusha           ; 保存所有寄存器
-    
-    ; 清除内容区域 (行1-21)
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_CONTENT
-    mov cx, 0x0100      ; 左上角: 行=1, 列=0
-    mov dx, 0x164F      ; 右下角: 行=22, 列=79
-    int 0x10
-    
-    ; 重置光标到内容区域的开始位置
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 2           ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    popa            ; 恢复所有寄存器
     ret
 
 ; 跳过命令部分
@@ -845,7 +717,7 @@ compare_strings:
     stc                 ; 设置进位标志表示相等
     ret
 
-; 打印字符串,使其更可靠地处理换行和光标位置
+; 打印字符串，更可靠地处理换行和光标位置
 print_string:
     pusha           ; 保存所有寄存器
     mov ah, 0x0E
@@ -1230,20 +1102,23 @@ compare_file_name:
     clc
     ret
 
-; 数据区
-msg_title db 'MiniOS v1.1 - Simple OS Demo', 0
-msg_status db 'Status: Ready | Press ESC to clear input | Use UP/DOWN arrows for command history', 0
-msg_kernel db 'Kernel loaded successfully!', 13, 10, 0
-msg_welcome db 'Welcome to MiniOS!', 13, 10, 'Type "help" for commands.', 13, 10, 0
+; Data section
+msg_welcome db '=== MiniOS v1.2 - Command Line Version ===', 13, 10, 13, 10
+          db 'System loaded successfully!', 13, 10
+          db 'Type "help" to see available commands.', 13, 10
+          db 'Type "exit" to quit the system.', 13, 10, 13, 10, 0
+
 prompt db 'miniOS> ', 0
 help_text db 'Available commands:', 13, 10
-          db '  help - Show this help', 13, 10
+          db '  help    - Display this help', 13, 10
           db '  create [name] - Create a new file', 13, 10
           db '  delete [name] - Delete a file', 13, 10
           db '  rename [old] [new] - Rename a file', 13, 10
-          db '  list - List all files', 13, 10
+          db '  list    - List all files', 13, 10
           db '  move [name] [path] - Move file to path', 13, 10
-          db '  echo [text] - Display text', 13, 10, 0
+          db '  echo [text] - Display text', 13, 10
+          db '  exit    - Exit the system', 13, 10, 0
+
 msg_unknown db 'Unknown command. Type "help" for available commands.', 13, 10, 0
 msg_missing_arg db 'Missing argument. Type "help" for usage.', 13, 10, 0
 msg_rename_usage db 'Usage: rename [oldname] [newname]', 13, 10, 0
@@ -1258,6 +1133,7 @@ msg_file_moved db 'File moved.', 13, 10, 0
 msg_file_list db 'Files:', 13, 10, 0
 msg_file_prefix db '- ', 0
 msg_no_files db 'No files found.', 13, 10, 0
+msg_exit db 'Exiting system...', 13, 10, 0
 newline db 13, 10, 0
 
 cmd_help db 'help', 0
@@ -1267,6 +1143,7 @@ cmd_rename db 'rename', 0
 cmd_list db 'list', 0
 cmd_move db 'move', 0
 cmd_echo db 'echo', 0
+cmd_exit db 'exit', 0     ; 新增exit命令字符串
 
 default_filename db 'readme.txt', 0
 default_content db 'Welcome to MiniOS!', 0

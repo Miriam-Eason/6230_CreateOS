@@ -86,6 +86,7 @@ MiniOS启动后，您将看到命令提示符。可用的命令有：
 - rename [旧名称] [新名称] - 重命名文件
 - move [名称] [路径] - 设置文件路径
 - echo [文本] - 显示文本
+- quit - 退出系统
 
 ## 退出和重新启动
 
@@ -100,6 +101,8 @@ docker stop minios-container
 docker start minios-container
 docker exec -it minios-container bash
 cd /os/src
+make clean
+make
 make run
 
 
