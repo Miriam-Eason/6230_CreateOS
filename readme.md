@@ -69,11 +69,12 @@ docker run -it --name minios-container -v $(pwd):/os minios-dev
 ### 3. 编译和运行MiniOS
 
 在Docker容器内：
-
-cd /os/src
+```
+cd src
 make clean
 make
 make run
+```
 
 ## 使用MiniOS
 
