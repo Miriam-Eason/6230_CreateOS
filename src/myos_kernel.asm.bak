@@ -1,45 +1,24 @@
 [BITS 16]
 [ORG 0x1000]
 
-; GUI常量定义
-COLOR_HEADER      equ 0x1F    ; 蓝底白字
-COLOR_BORDER      equ 0x1F    ; 蓝底白字
-COLOR_CONTENT     equ 0x07    ; 黑底白字
-COLOR_HIGHLIGHT   equ 0x0F    ; 黑底亮白字
-COLOR_STATUS      equ 0x70    ; 白底黑字
-COLOR_ERROR       equ 0x0C    ; 黑底红字
-
-; 命令历史记录缓冲区
-MAX_HISTORY       equ 5       ; 最多存储5条命令
-HISTORY_SIZE      equ 256     ; 每条命令最多256字节
-
-; 文件系统常量
-MAX_FILES equ 10
-FILE_ENTRY_SIZE equ 48
-
 kernel_start:
     ; 设置文本模式
     mov ax, 0x0003      ; 80x25 文本模式
     int 0x10
     
-    ; 绘制GUI界面
-    call draw_gui
+    ; 显示内核消息
+    mov si, msg_kernel
+    call print_string
     
     ; 初始化文件系统
     call init_fs
     
-    ; 清空命令历史记录
-    call init_history
+    ; 显示欢迎消息
+    mov si, msg_welcome
+    call print_string
     
     ; 命令行循环
 command_loop:
-    ; 将光标定位到命令输入区
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 22          ; 行 (从0开始)
-    mov dl, 9           ; 列 (从0开始)
-    int 10h
-    
     ; 显示提示符
     mov si, prompt
     call print_string
@@ -48,194 +27,34 @@ command_loop:
     mov di, cmd_buffer
     call read_string
     
-    ; 检查命令是否为空
-    cmp byte [cmd_buffer], 0
-    je command_loop
-    
-    ; 添加到历史记录
-    call add_to_history
-    
     ; 解析命令
     call parse_command
-    
-    ; 更新状态栏
-    call update_status
     
     ; 继续循环
     jmp command_loop
 
-; 绘制GUI界面
-draw_gui:
-    ; 清屏
-    mov ax, 0x0003      ; 80x25 文本模式
-    int 0x10
-    
-    ; 绘制标题栏
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_HEADER
-    mov cx, 0x0000      ; 左上角: 行=0, 列=0
-    mov dx, 0x004F      ; 右下角: 行=0, 列=79
-    int 0x10
-    
-    ; 显示标题
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 0           ; 行 (从0开始)
-    mov dl, 30          ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_title
-    call print_string_color
-    
-    ; 绘制内容区域
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_CONTENT
-    mov cx, 0x0100      ; 左上角: 行=1, 列=0
-    mov dx, 0x164F      ; 右下角: 行=22, 列=79
-    int 0x10
-    
-    ; 绘制状态栏
-    mov ax, 0x0600      ; AH=06 (向上滚动) AL=00 (整个窗口)
-    mov bh, COLOR_STATUS
-    mov cx, 0x1700      ; 左上角: 行=23, 列=0
-    mov dx, 0x174F      ; 右下角: 行=23, 列=79
-    int 0x10
-    
-    ; 显示内核消息
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 2           ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_kernel
-    call print_string
-    
-    ; 显示欢迎消息
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 4           ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    mov si, msg_welcome
-    call print_string
-    
-    ; 显示状态栏信息
-    call update_status
-    
-    ret
-
-; 更新状态栏信息
-update_status:
-    ; 定位到状态栏
-    mov ah, 02h         ; 设置光标位置
-    mov bh, 0           ; 页面号
-    mov dh, 23          ; 行 (从0开始)
-    mov dl, 2           ; 列 (从0开始)
-    int 10h
-    
-    ; 显示状态信息
-    mov si, msg_status
-    mov bl, COLOR_STATUS
-    call print_string_attr
-    
-    ret
-
-; 打印带颜色的字符串，使用指定属性
-print_string_attr:
-    mov ah, 0x09        ; BIOS写字符及属性
-.loop:
-    lodsb
-    test al, al
-    jz .done
-    
-    mov cx, 1           ; 重复次数
-    int 0x10
-    
-    ; 移动光标
-    mov ah, 0x03        ; 获取光标位置
-    int 0x10
-    inc dl              ; 增加列
-    mov ah, 0x02        ; 设置光标位置
-    int 0x10
-    
-    mov ah, 0x09        ; 恢复AH
-    jmp .loop
-.done:
-    ret
-
-; 打印带颜色的字符串，使用默认前景/背景色
-print_string_color:
-    mov bl, COLOR_HEADER
-    call print_string_attr
-    ret
-
-; 初始化命令历史记录
-init_history:
-    mov cx, MAX_HISTORY
-    mov di, cmd_history
-    mov al, 0
+; 初始化文件系统
+init_fs:
+    ; 清空文件表
+    mov cx, MAX_FILES
+    mov di, file_table
 .clear_loop:
-    mov byte [di], al
-    add di, HISTORY_SIZE
+    mov byte [di], 0    ; 将文件名第一个字节设为0表示未使用
+    add di, FILE_ENTRY_SIZE
     loop .clear_loop
     
-    mov word [history_count], 0
-    mov word [history_index], 0
+    ; 创建一个初始文件
+    mov si, default_filename
+    call create_file
+    
+    ; 写入内容
+    mov si, default_filename
+    mov di, default_content
+    call write_file
+    
     ret
 
-; 添加命令到历史记录
-add_to_history:
-    ; 检查命令是否为空
-    cmp byte [cmd_buffer], 0
-    je .done
-    
-    ; 获取历史记录中的下一个位置
-    mov ax, [history_count]
-    cmp ax, MAX_HISTORY
-    jl .not_full
-    
-    ; 历史记录已满，需要移动所有条目
-    mov cx, MAX_HISTORY - 1
-    mov si, cmd_history + HISTORY_SIZE
-    mov di, cmd_history
-.move_loop:
-    push cx
-    mov cx, HISTORY_SIZE
-    rep movsb
-    pop cx
-    loop .move_loop
-    
-    mov di, cmd_history + (MAX_HISTORY - 1) * HISTORY_SIZE
-    jmp .copy_cmd
-    
-.not_full:
-    ; 计算目标位置
-    push dx           ; 保存dx，因为mul会修改它
-    mov cx, HISTORY_SIZE
-    mul cx            ; ax = ax * cx
-    pop dx            ; 恢复dx
-    add ax, cmd_history
-    mov di, ax
-    inc word [history_count]
-    
-.copy_cmd:
-    ; 复制命令到历史记录
-    mov si, cmd_buffer
-    mov cx, HISTORY_SIZE
-.copy_loop:
-    lodsb
-    stosb
-    test al, al
-    jz .done
-    loop .copy_loop
-    
-.done:
-    mov word [history_index], 0  ; 重置历史索引
-    ret
-
-; 增强的读取字符串函数，支持命令历史记录
+; 读取字符串
 read_string:
     xor cx, cx          ; 清零计数器
 .read_char:
@@ -250,32 +69,15 @@ read_string:
     cmp al, 8
     je .backspace
     
-    ; 检查上下箭头键 (特殊键)
-    cmp ah, 48h         ; 上箭头
-    je .up_arrow
-    cmp ah, 50h         ; 下箭头
-    je .down_arrow
-    
-    ; Escape键 - 清空当前输入
-    cmp al, 27
-    je .clear_input
-    
     ; 常规字符
-    cmp al, ' '         ; 小于空格的控制字符
-    jl .read_char
-    cmp al, 127         ; 大于DEL的扩展ASCII
-    ja .read_char
-    
-    ; 检查缓冲区上限
-    cmp cx, 250
-    jge .read_char
-    
     mov ah, 0x0E        ; BIOS显示字符
     int 0x10
     
     stosb               ; 存储字符到[di]并递增di
     inc cx
-    jmp .read_char
+    cmp cx, 250         ; 检查缓冲区上限
+    jl .read_char
+    jmp .done
     
 .backspace:
     ; 确保有字符可删
@@ -299,214 +101,6 @@ read_string:
     dec cx
     jmp .read_char
     
-.clear_input:
-    ; 只有当有字符时才清除
-    test cx, cx
-    jz .read_char
-    
-    ; 清除当前行
-    mov dx, cx
-.clear_loop:
-    ; 显示退格
-    mov ah, 0x0E
-    mov al, 8
-    int 0x10
-    
-    ; 显示空格覆盖字符
-    mov al, ' '
-    int 0x10
-    
-    ; 再次退格
-    mov al, 8
-    int 0x10
-    
-    dec dx
-    jnz .clear_loop
-    
-    ; 重置指针和计数器
-    sub di, cx
-    xor cx, cx
-    jmp .read_char
-    
-.up_arrow:
-    ; 检查是否有历史记录
-    cmp word [history_count], 0
-    je .read_char
-    
-    ; 检查当前索引
-    mov ax, [history_index]
-    cmp ax, [history_count]
-    jge .read_char
-    
-    ; 清除当前输入
-    test cx, cx
-    jz .load_history
-    
-    push ax
-    mov dx, cx
-.clear_up_loop:
-    ; 显示退格
-    mov ah, 0x0E
-    mov al, 8
-    int 0x10
-    
-    ; 显示空格覆盖字符
-    mov al, ' '
-    int 0x10
-    
-    ; 再次退格
-    mov al, 8
-    int 0x10
-    
-    dec dx
-    jnz .clear_up_loop
-    
-    pop ax
-    
-.load_history:
-    ; 增加历史索引
-    inc word [history_index]
-    mov ax, [history_index]
-    
-    ; 计算历史记录位置
-    mov bx, [history_count]
-    sub bx, ax
-    js .reset_index
-    
-    push ax
-    push dx
-    mov ax, bx
-    mov cx, HISTORY_SIZE
-    mul cx
-    mov bx, ax
-    pop dx
-    pop ax
-    add bx, cmd_history
-    
-    ; 清除当前输入
-    push di
-    sub di, cx
-    mov cx, 0
-    
-    ; 加载历史命令
-    mov si, bx
-.load_loop:
-    lodsb
-    test al, al
-    jz .end_load
-    
-    ; 显示字符
-    mov ah, 0x0E
-    int 0x10
-    
-    mov [di], al
-    inc di
-    inc cx
-    
-    jmp .load_loop
-    
-.end_load:
-    pop di
-    add di, cx
-    jmp .read_char
-    
-.reset_index:
-    mov word [history_index], 0
-    jmp .read_char
-    
-.down_arrow:
-    ; 检查是否有历史记录
-    cmp word [history_count], 0
-    je .read_char
-    
-    ; 检查当前索引
-    mov ax, [history_index]
-    test ax, ax
-    jz .read_char
-    
-    ; 清除当前输入
-    test cx, cx
-    jz .load_history_down
-    
-    push ax
-    mov dx, cx
-.clear_down_loop:
-    ; 显示退格
-    mov ah, 0x0E
-    mov al, 8
-    int 0x10
-    
-    ; 显示空格覆盖字符
-    mov al, ' '
-    int 0x10
-    
-    ; 再次退格
-    mov al, 8
-    int 0x10
-    
-    dec dx
-    jnz .clear_down_loop
-    
-    pop ax
-    
-.load_history_down:
-    ; 减少历史索引
-    dec word [history_index]
-    mov ax, [history_index]
-    
-    ; 如果索引为0，则清空
-    test ax, ax
-    jnz .not_zero
-    
-    ; 清除当前输入
-    push di
-    sub di, cx
-    mov [di], byte 0
-    mov cx, 0
-    pop di
-    jmp .read_char
-    
-.not_zero:
-    ; 计算历史记录位置
-    mov bx, [history_count]
-    sub bx, ax
-    push ax
-    push dx
-    mov ax, bx
-    mov cx, HISTORY_SIZE
-    mul cx
-    mov bx, ax
-    pop dx
-    pop ax
-    add bx, cmd_history
-    
-    ; 清除当前输入
-    push di
-    sub di, cx
-    mov cx, 0
-    
-    ; 加载历史命令
-    mov si, bx
-.load_down_loop:
-    lodsb
-    test al, al
-    jz .end_load_down
-    
-    ; 显示字符
-    mov ah, 0x0E
-    int 0x10
-    
-    mov [di], al
-    inc di
-    inc cx
-    
-    jmp .load_down_loop
-    
-.end_load_down:
-    pop di
-    add di, cx
-    jmp .read_char
-    
 .done:
     ; 添加换行
     mov ah, 0x0E
@@ -517,27 +111,6 @@ read_string:
     
     ; 添加空字符
     mov byte [di], 0
-    ret
-
-; 初始化文件系统
-init_fs:
-    ; 清空文件表
-    mov cx, MAX_FILES
-    mov di, file_table
-.clear_loop:
-    mov byte [di], 0    ; 将文件名第一个字节设为0表示未使用
-    add di, FILE_ENTRY_SIZE
-    loop .clear_loop
-    
-    ; 创建一个初始文件
-    mov si, default_filename
-    call create_file
-    
-    ; 写入内容
-    mov si, default_filename
-    mov di, default_content
-    call write_file
-    
     ret
 
 ; 解析命令
@@ -1135,8 +708,6 @@ compare_file_name:
     ret
 
 ; 数据区
-msg_title db 'MiniOS v1.1 - Simple OS Demo', 0
-msg_status db 'Status: Ready | Press ESC to clear input | Use UP/DOWN arrows for command history', 0
 msg_kernel db 'Kernel loaded successfully!', 13, 10, 0
 msg_welcome db 'Welcome to MiniOS!', 13, 10, 'Type "help" for commands.', 13, 10, 0
 prompt db 'miniOS> ', 0
@@ -1179,11 +750,8 @@ default_content db 'Welcome to MiniOS!', 0
 cmd_buffer times 256 db 0
 temp_ptr dw 0
 
-; 命令历史记录
-cmd_history times (MAX_HISTORY * HISTORY_SIZE) db 0
-history_count dw 0    ; 历史记录中的命令数量
-history_index dw 0    ; 当前浏览的历史索引
-
 ; 文件系统结构
 ; 每个文件项: 16字节文件名 + 16字节内容 + 16字节路径 = 48字节
+MAX_FILES equ 10
+FILE_ENTRY_SIZE equ 48
 file_table times (MAX_FILES * FILE_ENTRY_SIZE) db 0
